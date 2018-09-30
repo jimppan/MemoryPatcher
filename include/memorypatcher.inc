@@ -4,10 +4,12 @@
 #define _memorypatcher_included
 
 #define MP_PREFIX						" \x09[\x04MemoryPatcher\x09]"
+#define MP_GAMEDATA_DIR					"memorypatcher.games"
+#define MP_DEBUG_PREFIX					"[memorypatcher.smx]"
+#define MP_TEMP_FILE					"temp.memorypatcher.txt"
 #define MP_PATCH_MAX_NAME_LENGTH 		32
 #define MP_PATCH_MAX_SIG_LENGTH 		256
 #define MP_PATCH_MAX_OP_CODES			2048
-#define MP_PATCH_MAX_OP_STRING_CODES	MP_PATCH_MAX_OP_CODES * 4
 
 enum//OSType
 {
@@ -43,6 +45,14 @@ enum//ApplyMemoryPatchError
 	MP_PATCH_APPLY_ERROR_UNKNOWN_OFFSET = 			-1,			// Should never happend, could not find offset in config file
 	MP_PATCH_APPLY_ERROR_UNKNOWN_COUNT = 			0,			// Should never happend, could not find patch byte count
 	MP_PATCH_APPLY_SUCCESS = 						1			// If memory patch was successfully applied
+}
+
+enum//RestoreMemoryPatchError
+{
+	MP_PATCH_RESTORE_ERROR_INDEX_NOT_FOUND =		-2,			// Should never happend, patch index was not found in stringmap
+	MP_PATCH_RESTORE_ERROR_NOT_FOUND = 				-1,			// Memory patch sig label was not found
+	MP_PATCH_RESTORE_ERROR_IS_RESTORED = 			0,			// Memory patch was already restored
+	MP_PATCH_RESTORE_SUCCESS = 						1			// If memory patch was successfully restored
 
 }
 
@@ -141,6 +151,13 @@ native bool MP_Restore(const char[] siglabel);
 native int MP_GetMemoryPatchCount();
 
 /**
+ * Returns amount of existing memory patches added to the plugin
+ *
+ * @return int				memory patch count
+ */
+native int MP_GetMemoryPatchSigLabel(int index, char[] buffer, int maxlen);
+
+/**
  * AddMemoryPatch or AddMemoryPatchEx should be called here or later (This is called server_spawn event)
  *
  * @return void
@@ -218,8 +235,12 @@ public KeyValues MP_GenerateGameDataKeyvalues(int ostype, int libtype, const cha
 
 public void MP_ByteStringArrayToIntArray(const char[] byteStringArray, int[] opcodes, int opcodeLength)
 {
-	int itMax = opcodeLength * 4;
-	for (int i = 0; i < itMax; i++)
+	int byteStringLength = strlen(byteStringArray);
+#if defined DEBUG#
+	MP_Debug("(BYTE STRLEN: %d) (OPCODELENGTH: %d)", byteStringLength, opcodeLength);
+#endif	
+	int opcode = 0;
+	for (int i = 0; i < byteStringLength; i++)
 	{
 		if(byteStringArray[i] == 'x')
 		{
@@ -227,13 +248,92 @@ public void MP_ByteStringArrayToIntArray(const char[] byteStringArray, int[] opc
 			szHex[0] = byteStringArray[i + 1];
 			szHex[1] = byteStringArray[i + 2];
 			szHex[2] = '\0';
-			int opcode = StringToInt(szHex, 16);
+			opcode = StringToInt(szHex, 16);
 			opcodes[RoundToFloor(float(i) / 4.0)] = opcode;
 #if defined DEBUG
 			MP_Debug("OPCODE: %x (%d)", opcode, opcode);
 #endif
 		}
 	}
+	
+	int itMax = opcodeLength * 4;
+	if(byteStringLength < itMax)
+	{
+#if defined DEBUG
+		MP_Debug("Not enough OPcodes to satisfy array, extending last op code (%x)", opcode);
+#endif
+		for (int i = RoundToFloor(float(byteStringLength) / float(4)); i < opcodeLength; i++)
+		{
+			opcodes[i] = opcode;
+#if defined DEBUG
+			MP_Debug("EXTENDED OPCODE: %x (%d)", opcode, opcode);
+#endif
+		}
+	}
+}
+
+public void MP_GetRestoreErrorCodeString(int errorCode, char[] buffer, int maxlen)
+{
+	switch(errorCode)
+	{
+		case MP_PATCH_RESTORE_ERROR_INDEX_NOT_FOUND:
+		{
+			Format(buffer, maxlen, "Invalid patch index");
+		}
+		case MP_PATCH_RESTORE_ERROR_NOT_FOUND:
+		{
+			Format(buffer, maxlen, "Not found");
+		}
+		case MP_PATCH_RESTORE_ERROR_IS_RESTORED:
+		{
+			Format(buffer, maxlen, "Already restored");
+		}
+		case MP_PATCH_RESTORE_SUCCESS:
+		{
+			Format(buffer, maxlen, "Success");
+		}
+	}
+}
+
+public void MP_GetApplyErrorCodeString(int errorCode, char[] buffer, int maxlen)
+{
+	switch(errorCode)
+	{
+		case MP_PATCH_APPLY_ERROR_NOT_FOUND:
+		{
+			Format(buffer, maxlen, "Not found");
+		}
+		case MP_PATCH_APPLY_ERROR_IS_PATCHED:
+		{
+			Format(buffer, maxlen, "Already patched");
+		}
+		case MP_PATCH_APPLY_ERROR_UNKNOWN_ADDRESS:
+		{
+			Format(buffer, maxlen, "Invalid address");
+		}
+		case MP_PATCH_APPLY_ERROR_UNKNOWN_OFFSET:
+		{
+			Format(buffer, maxlen, "Offset not found");
+		}
+		case MP_PATCH_APPLY_ERROR_UNKNOWN_COUNT:
+		{
+			Format(buffer, maxlen, "Patch byte count not found");
+		}
+		case MP_PATCH_APPLY_SUCCESS:
+		{
+			Format(buffer, maxlen, "Success");
+		}
+	}
+}
+
+public int MP_GetOSTypeByName(const char[] os)
+{
+	if(StrContains(os, "WIN32", false) != -1)
+		return OSType_Windows;
+	else if(StrContains(os, "LINUX", false) != -1)
+		return OSType_Linux;
+	else
+		return OSType_Mac;
 }
 
 public void MP_GetOSTypeName(int ostype, char[] buffer, int maxlen)
@@ -293,8 +393,8 @@ public void MP_Debug(const char[] message, any ...)
 	char szBuffer[254];
 	VFormat(szBuffer, sizeof(szBuffer), message, 2);
 	
-	PrintToChatAll("[memorypatcher.smx] %s", szBuffer);
-	PrintToServer("[memorypatcher.smx] %s", szBuffer);
+	PrintToChatAll("%s %s", MP_DEBUG_PREFIX, szBuffer);
+	PrintToServer("%s %s", MP_DEBUG_PREFIX, szBuffer);
 }
 
 public SharedPlugin __pl_memorypatcher  =

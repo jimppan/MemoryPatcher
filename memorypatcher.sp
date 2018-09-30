@@ -21,17 +21,19 @@ public Plugin myinfo =
 	url = "https://github.com/Rachnus"
 };
 
-bool g_bPatched = false;
 
-int g_iServerOS = OSType_Invalid;
+StringMap g_hPatchIndices = 			null;				// Used to map patchgamedata siglabels with restore arraylists
+bool g_bPatched = 						false;				// Used to check if we've already patched everything on OnMemoryPatcherReady forward
 
-ArrayList g_hPatchGamedata =   			null;
+int g_iServerOS = 						OSType_Invalid;		// Servers OS 					(Cached in temp.memorypatcher.txt by default)
 
-ArrayList g_hPatchAddress =  			null;
-ArrayList g_hPatchByteCount =  			null;
-ArrayList g_hPatchPreviousOPCodes =  	null;
+ArrayList g_hPatchGamedata =   			null;				// Stores all gamedata handles 	(IGameConfig)
 
-Handle g_hOnMemoryPatcherReady;
+ArrayList g_hPatchAddress =  			null;				// Patch addresses 				(Used to restore patches)
+ArrayList g_hPatchByteCount =  			null;				// Patch byte count 			(Used to restore patches)
+ArrayList g_hPatchPreviousOPCodes =  	null;				// Patch previous op codes		(Used to restore patches)
+
+Handle g_hOnMemoryPatcherReady;								// Forward used to patch from other plugins
 
 public void OnPluginStart()
 {
@@ -39,10 +41,20 @@ public void OnPluginStart()
 	
 	g_hOnMemoryPatcherReady = CreateGlobalForward("MP_OnMemoryPatcherReady", ET_Ignore);
 	
-	RegAdminCmd("sm_mp_patchall", 	Command_PatchAll, 		ADMFLAG_ROOT);
-	RegAdminCmd("sm_mp_restoreall", Command_RestoreAll, 	ADMFLAG_ROOT);
-	
+	RegAdminCmd("sm_mp_patchall", 	Command_PatchAll, 		ADMFLAG_ROOT, "Patch all existing memory patches");
+	RegAdminCmd("sm_mp_restoreall", Command_RestoreAll, 	ADMFLAG_ROOT, "Restore all existing memory patches");
+	RegAdminCmd("sm_mp_patch", 		Command_Patch, 			ADMFLAG_ROOT, "Patch a single memory patch by siglabel");
+	RegAdminCmd("sm_mp_restore", 	Command_Restore, 		ADMFLAG_ROOT, "Restore a single memory patch by siglabel");
+	RegAdminCmd("sm_mp_status", 	Command_Status, 		ADMFLAG_ROOT, "Print out status of existing memory patches");
+	RegAdminCmd("sm_mp_refresh", 	Command_Refresh, 		ADMFLAG_ROOT, "Read from gamedata folder (gamedata/memorypatcher.games/)");
 	InitPatchLists();
+	
+	g_hPatchIndices = new StringMap();
+}
+
+public void OnAllPluginsLoaded()
+{
+	GetServerOS();
 }
 
 public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int err_max)
@@ -58,6 +70,7 @@ public APLRes AskPluginLoad2(Handle hMyself, bool bLate, char[] sError, int err_
 	CreateNative("MP_Patch", Native_Patch);
 	CreateNative("MP_Restore", Native_Restore);
 	CreateNative("MP_GetMemoryPatchCount", Native_GetMemoryPatchCount);
+	CreateNative("MP_GetMemoryPatchSigLabel", Native_GetMemoryPatchSigLabel);
 	
 	RegPluginLibrary("memorypatcher");
 	
@@ -184,25 +197,97 @@ public int Native_GetMemoryPatchCount(Handle plugin, int numParams)
 	return g_hPatchGamedata.Length;
 }
 
+public int Native_GetMemoryPatchSigLabel(Handle plugin, int numParams)
+{
+	char sigLabel[MP_PATCH_MAX_NAME_LENGTH];
+	GameConfGetKeyValue(g_hPatchGamedata.Get(GetNativeCell(1)), "siglabel", sigLabel, MP_PATCH_MAX_NAME_LENGTH);
+	SetNativeString(2, sigLabel, GetNativeCell(3));
+}
+
 public void OnPluginEnd()
 {
 	RestoreMemoryPatchAll();
 }
 
+public Action Command_Patch(int client, int args)
+{
+	if(args <= 0)
+	{
+		ReplyToCommand(client, "%s Usage: \x04sm_mp_patch <siglabel>", MP_PREFIX);
+		return Plugin_Handled;
+	}
+	
+	char arg[MP_PATCH_MAX_SIG_LENGTH];
+	GetCmdArgString(arg, MP_PATCH_MAX_SIG_LENGTH);
+	
+	int errorCode = ApplyMemoryPatchByLabel(arg);
+	
+	char szCode[32];
+	MP_GetApplyErrorCodeString(errorCode, szCode, sizeof(szCode));
+	PrintToChat(client, "%s APPLY PATCH: \x03%s \x09(\x04code: %d\x09) %s", MP_PREFIX, arg, errorCode, szCode);
+	
+	return Plugin_Handled;
+}
+
 public Action Command_PatchAll(int client, int args)
 {
-	int succeeded = ApplyMemoryPatchAll();
-	PrintToChat(client, "%s \x04Success\x09: \x05%d\x09", MP_PREFIX, succeeded);
-	if(succeeded != g_hPatchGamedata.Length)
-		PrintToChat(client, "%s \x07Failed\x09: \x05%d\x09", MP_PREFIX, g_hPatchGamedata.Length - succeeded);
+	ApplyMemoryPatchAll();
+	Command_Status(client, 0);
+	
+	return Plugin_Handled;
+}
+
+public Action Command_Restore(int client, int args)
+{
+	if(args <= 0)
+	{
+		ReplyToCommand(client, "%s Usage: \x04sm_mp_restore <siglabel>", MP_PREFIX);
+		return Plugin_Handled;
+	}
+	
+	char arg[MP_PATCH_MAX_SIG_LENGTH];
+	GetCmdArgString(arg, MP_PATCH_MAX_SIG_LENGTH);
+	
+	int errorCode = RestoreMemoryPatchByLabel(arg);
+	
+	char szCode[32];
+	MP_GetRestoreErrorCodeString(errorCode, szCode, sizeof(szCode));
+	PrintToChat(client, "%s RESTORE PATCH: \x03%s \x09(\x04code: %d\x09) %s", MP_PREFIX, arg, errorCode, szCode);
 	
 	return Plugin_Handled;
 }
 
 public Action Command_RestoreAll(int client, int args)
 {
-	int restored = RestoreMemoryPatchAll();
-	PrintToChat(client, "%s \x04Restored\x09: \x03%d\x09", MP_PREFIX, restored);
+	RestoreMemoryPatchAll();
+	Command_Status(client, 0);
+	
+	return Plugin_Handled;
+}
+
+public Action Command_Status(int client, int args)
+{
+	if(g_hPatchGamedata.Length <= 0)
+	{
+		ReplyToCommand(client, "%s No memory patches found", MP_PREFIX);
+		return Plugin_Handled;
+	}
+	
+	for (int i = 0; i < g_hPatchGamedata.Length; i++)
+	{
+		bool patched = IsPatchedByIndex(i);
+		char siglabel[MP_PATCH_MAX_NAME_LENGTH];
+		GameConfGetKeyValue(g_hPatchGamedata.Get(i), "siglabel", siglabel, MP_PATCH_MAX_NAME_LENGTH);
+		
+		ReplyToCommand(client, "%s \x03%s\x09 - %s%s", MP_PREFIX, siglabel, patched ? "\x04":"\x07", patched ? "PATCHED":"NOT PATCHED");
+	}
+	return Plugin_Handled;
+}
+
+public Action Command_Refresh(int client, int args)
+{
+	LoadPredefinedMemoryPatches();
+	ReplyToCommand(client, "%s Predefined memory patches refreshed", MP_PREFIX);
 	return Plugin_Handled;
 }
 
@@ -210,23 +295,7 @@ public Action Event_ServerSpawn(Event event, const char[] name, bool dontBroadca
 {
 	char os[32];
 	event.GetString("os", os, sizeof(os));
-	
-	if(StrEqual(os, "WIN32", false))
-		g_iServerOS = OSType_Windows;
-	else if(StrEqual(os, "LINUX", false))
-		g_iServerOS = OSType_Linux;
-	else
-		g_iServerOS = OSType_Mac;
-#if defined DEBUG
-	MP_Debug("Server OS: %s", os);
-#endif
-	
-	if(!g_bPatched)
-	{
-		Call_StartForward(g_hOnMemoryPatcherReady);
-		Call_Finish();
-		g_bPatched = true;
-	}
+	OnServerOSKnown(os);
 }	
 
 public void InitPatchLists()
@@ -236,6 +305,149 @@ public void InitPatchLists()
 	g_hPatchAddress = new ArrayList();
 	g_hPatchByteCount = new ArrayList();
 	g_hPatchPreviousOPCodes = new ArrayList(MP_PATCH_MAX_OP_CODES);
+}
+
+public void GetServerOS()
+{
+	if(!FileExists(MP_TEMP_FILE, true))
+		return;
+	
+	File serverOsFile = OpenFile(MP_TEMP_FILE, "r");
+	if(!serverOsFile)
+	{
+#if defined DEBUG
+		MP_Debug("Could not find temp file \"%s\"", MP_TEMP_FILE);
+#endif
+		return;
+	}
+	
+	char os[32];
+	ReadFileLine(serverOsFile, os, sizeof(os));
+	delete serverOsFile;
+	
+	OnServerOSKnown(os);
+}
+
+public void OnServerOSKnown(const char[] os)
+{
+	g_iServerOS = MP_GetOSTypeByName(os);
+	
+#if defined DEBUG
+	MP_Debug("Server OS KNOWN: %s", os);
+#endif
+	if(!g_bPatched)
+	{
+		File serverOsFile = OpenFile(MP_TEMP_FILE, "w");
+		if(!serverOsFile)
+		{
+#if defined DEBUG
+			MP_Debug("Could not find temp file \"%s\"", MP_TEMP_FILE);
+#endif
+			return;
+		}
+		
+		WriteFileLine(serverOsFile, os);
+		delete serverOsFile;
+		
+		LoadPredefinedMemoryPatches();
+		Call_StartForward(g_hOnMemoryPatcherReady);
+		Call_Finish();
+		g_bPatched = true;
+	}
+}
+
+public int LoadPredefinedMemoryPatches()
+{
+	char memoryPatcherDir[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, memoryPatcherDir, sizeof(memoryPatcherDir), "gamedata/%s/", MP_GAMEDATA_DIR);
+	
+	if(!DirExists(memoryPatcherDir, true))
+	{
+		PrintToServer("%s Path \"%s\" does not exist.", MP_DEBUG_PREFIX, memoryPatcherDir);
+		PrintToServer("%s Skipping reading predefined memory patches", MP_DEBUG_PREFIX, memoryPatcherDir);
+		return -1;
+	}
+	
+	DirectoryListing dirList = OpenDirectory(memoryPatcherDir, true);
+	if(dirList == INVALID_HANDLE)
+	{
+		LogError("%s Invalid directory \"%s\"", MP_DEBUG_PREFIX, ".");
+		return -1;
+	}
+	
+	char fileName[PLATFORM_MAX_PATH];
+	FileType type;
+	
+	int count = 0;
+
+	while(dirList.GetNext(fileName, PLATFORM_MAX_PATH, type))
+	{
+		if(type == FileType_File && (StrContains(fileName, ".games.txt", false) != -1))
+		{
+			ReplaceString(fileName, sizeof(fileName), ".txt", "", true);
+			
+			char fullPath[PLATFORM_MAX_PATH];
+			Format(fullPath, sizeof(fullPath), "%s/%s", MP_GAMEDATA_DIR, fileName);
+
+			Handle gameConfig = LoadGameConfigFile(fullPath);
+			if(gameConfig == INVALID_HANDLE)
+			{
+				delete gameConfig;
+				LogError("Can't find \"%s\" gamedata.", fullPath);
+				continue;
+			}
+			
+#if defined DEBUG
+			MP_Debug("Gamedata \"%s\" found!", fullPath);
+#endif
+			
+			char sigLabel[MP_PATCH_MAX_NAME_LENGTH];
+			if(!GameConfGetKeyValue(gameConfig, "siglabel", sigLabel, MP_PATCH_MAX_NAME_LENGTH))
+			{
+				delete gameConfig;
+				LogError("Can't find \"siglabel\" key");
+				continue;
+			}
+			
+			char opcodesLabel[32];
+			MP_GetOSTypeName(g_iServerOS, opcodesLabel, sizeof(opcodesLabel));
+			Format(opcodesLabel, sizeof(opcodesLabel), "opcodes_%s", opcodesLabel);
+			
+			char temp[16];
+			if(!GameConfGetKeyValue(gameConfig, opcodesLabel, temp, sizeof(temp)))
+			{
+				delete gameConfig;
+				LogError("Can't find \"%s\" key", opcodesLabel);
+				continue;
+			}
+#if defined DEBUG
+			MP_Debug("Found memory patch \"%s\"", sigLabel);
+#endif
+			if(MemoryPatchExists(sigLabel))
+			{
+#if defined DEBUG
+				MP_Debug("Memory patch \"%s\" already exists", sigLabel);
+#endif
+				delete gameConfig;
+				continue;
+			}
+			
+			g_hPatchGamedata.Push(gameConfig);
+			if(ApplyMemoryPatchByLabel(sigLabel) >= MP_PATCH_APPLY_SUCCESS)
+			{
+#if defined DEBUG
+				MP_Debug("Memory patch \"%s\" applied!", sigLabel);
+#endif
+				count++;
+			}
+		}
+	}
+	
+#if defined DEBUG
+	if(count <= 0)
+		MP_Debug("No predefined memory patches found");
+#endif
+	return count;
 }
 
 public int RestoreMemoryPatchAll()
@@ -252,7 +464,7 @@ public int ApplyMemoryPatchAll()
 	int count = 0;
 	for (int i = 0; i < g_hPatchGamedata.Length; i++)
 	{
-		if(ApplyMemoryPatchByIndex(i))
+		if(ApplyMemoryPatchByIndex(i) >= MP_PATCH_APPLY_SUCCESS)
 			count++;
 	}
 	return count;
@@ -416,8 +628,12 @@ public bool IsPatchedByIndex(int index)
 
 	int opcodes[MP_PATCH_MAX_OP_CODES];
 	
+	char opcodesLabel[32];
+	MP_GetOSTypeName(g_iServerOS, opcodesLabel, sizeof(opcodesLabel));
+	Format(opcodesLabel, sizeof(opcodesLabel), "opcodes_%s", opcodesLabel);
+	
 	char szOpcodes[MP_PATCH_MAX_OP_CODES * 4];
-	GameConfGetKeyValue(g_hPatchGamedata.Get(index), "opcodes", szOpcodes, MP_PATCH_MAX_OP_CODES * 4);
+	GameConfGetKeyValue(g_hPatchGamedata.Get(index), opcodesLabel, szOpcodes, MP_PATCH_MAX_OP_CODES * 4);
 	MP_ByteStringArrayToIntArray(szOpcodes, opcodes, patchByteCount);
 	
 	int data;
@@ -476,7 +692,6 @@ public int ApplyMemoryPatchByIndex(int index)
 	}
 	
 	address += view_as<Address>(offset);
-	g_hPatchAddress.Push(address);
 	
 	
 	int patchByteCount = GameConfGetOffset(g_hPatchGamedata.Get(index), "PatchByteCount");
@@ -485,14 +700,23 @@ public int ApplyMemoryPatchByIndex(int index)
 		LogError("Can't find \"PatchByteCount\" in gamedata. (%s)", sigLabel);
 		return MP_PATCH_APPLY_ERROR_UNKNOWN_COUNT;
 	}
-	
+
+	g_hPatchAddress.Push(address);
 	g_hPatchByteCount.Push(patchByteCount);
 	
 	int previousOpcodes[MP_PATCH_MAX_OP_CODES];
 	int opcodes[MP_PATCH_MAX_OP_CODES];
 	
+	char opcodesLabel[32];
+	MP_GetOSTypeName(g_iServerOS, opcodesLabel, sizeof(opcodesLabel));
+	Format(opcodesLabel, sizeof(opcodesLabel), "opcodes_%s", opcodesLabel);
+	
 	char szOpcodes[MP_PATCH_MAX_OP_CODES * 4];
-	GameConfGetKeyValue(g_hPatchGamedata.Get(index), "opcodes", szOpcodes, MP_PATCH_MAX_OP_CODES * 4);
+	GameConfGetKeyValue(g_hPatchGamedata.Get(index), opcodesLabel, szOpcodes, MP_PATCH_MAX_OP_CODES * 4);
+
+#if defined DEBUG
+	MP_Debug("(%s) OPCODE LENGTH: %d/%d", sigLabel, strlen(szOpcodes), MP_PATCH_MAX_OP_CODES * 4);
+#endif
 	
 	MP_ByteStringArrayToIntArray(szOpcodes, opcodes, patchByteCount);
 	
@@ -507,45 +731,63 @@ public int ApplyMemoryPatchByIndex(int index)
 	}
 	
 	g_hPatchPreviousOPCodes.PushArray(previousOpcodes, patchByteCount);
+	g_hPatchIndices.SetValue(sigLabel, g_hPatchAddress.Length - 1);
 	return MP_PATCH_APPLY_SUCCESS;
 }
 
-public bool RestoreMemoryPatchByLabel(const char[] p_sigLabel)
+public int RestoreMemoryPatchByLabel(const char[] p_sigLabel)
 {
-	int index = -1;
+	int gamedataIndex = -1;
+	
 	for (int i = 0; i < g_hPatchGamedata.Length; i++)
 	{
 		char sigLabel[MP_PATCH_MAX_NAME_LENGTH];
 		GameConfGetKeyValue(g_hPatchGamedata.Get(i), "siglabel", sigLabel, MP_PATCH_MAX_NAME_LENGTH);
 		if(StrEqual(sigLabel, p_sigLabel, true))
 		{
-			index = i;
+			gamedataIndex = i;
 			break;
 		}
 	}
 	
-	if(index == -1)
-		return false;
+	if(gamedataIndex == -1)
+		return MP_PATCH_RESTORE_ERROR_NOT_FOUND;
 		
-	RestoreMemoryPatchByIndex(index);
-	return true;
+	return RestoreMemoryPatchByIndex(gamedataIndex);
 }
 
-public void RestoreMemoryPatchByIndex(int index)
+public int RestoreMemoryPatchByIndex(int index)
 {
-	Address addr = g_hPatchAddress.Get(index);
-	int byteCount = g_hPatchByteCount.Get(index);
+	if(!IsPatchedByIndex(index))
+		return MP_PATCH_RESTORE_ERROR_IS_RESTORED;
+		
+	char sigLabel[MP_PATCH_MAX_NAME_LENGTH];
+	GameConfGetKeyValue(g_hPatchGamedata.Get(index), "siglabel", sigLabel, MP_PATCH_MAX_NAME_LENGTH);
+	
+	int restoreIndex = -1;
+	if(!g_hPatchIndices.GetValue(sigLabel, restoreIndex))
+	{
+		LogError("Could not find patch index for siglabel \"%s\"", sigLabel);
+		return MP_PATCH_RESTORE_ERROR_INDEX_NOT_FOUND;
+	}
+	
+	Address addr = g_hPatchAddress.Get(restoreIndex);
+	int byteCount = g_hPatchByteCount.Get(restoreIndex);
 	
 	int opcodes[MP_PATCH_MAX_OP_CODES];
-	g_hPatchPreviousOPCodes.GetArray(index, opcodes, byteCount);
+	g_hPatchPreviousOPCodes.GetArray(restoreIndex, opcodes, byteCount);
 	
 	if(addr != Address_Null)
 	{
 		for(int j = 0; j < byteCount; j++)
 			StoreToAddress(addr + view_as<Address>(j), opcodes[j], NumberType_Int8);
 	}
+
+	g_hPatchAddress.Erase(restoreIndex);
+	g_hPatchByteCount.Erase(restoreIndex);
+	g_hPatchPreviousOPCodes.Erase(restoreIndex);
 	
-	g_hPatchAddress.Erase(index);
-	g_hPatchByteCount.Erase(index);
-	g_hPatchPreviousOPCodes.Erase(index);
+	g_hPatchIndices.Remove(sigLabel);
+	
+	return MP_PATCH_RESTORE_SUCCESS;
 }

@@ -1,6 +1,6 @@
 #pragma semicolon 1
 
-#define DEBUG
+//#define DEBUG
 #pragma dynamic 131072
 
 #define PLUGIN_AUTHOR "Rachnus"
@@ -23,7 +23,7 @@ public Plugin myinfo =
 
 bool g_bPatched = false;
 
-int g_iServerOS = OSType_Windows;
+int g_iServerOS = OSType_Invalid;
 
 ArrayList g_hPatchGamedata =   			null;
 
@@ -41,11 +41,6 @@ public void OnPluginStart()
 	
 	RegAdminCmd("sm_mp_patchall", 	Command_PatchAll, 		ADMFLAG_ROOT);
 	RegAdminCmd("sm_mp_restoreall", Command_RestoreAll, 	ADMFLAG_ROOT);
-	
-#if defined DEBUG
-	RegAdminCmd("sm_mptest", Command_Test, ADMFLAG_ROOT);
-	RegAdminCmd("sm_mptest2", Command_Test2, ADMFLAG_ROOT);
-#endif
 	
 	InitPatchLists();
 }
@@ -193,25 +188,6 @@ public void OnPluginEnd()
 {
 	RestoreMemoryPatchAll();
 }
-
-#if defined DEBUG
-public Action Command_Test(int client, int args)
-{
-	//int opcodes[5] =  { 0x90, 0x90, 0x90, 0x90, 0x90 };
-	char sig[] = "\\x55\\x8B\\xEC\\x83\\xEC\\x10\\x53\\x56\\x8B\\xF1\\x8B\\x0D\\x34";
-	if(AddMemoryPatchEx(OSType_Windows, LIBType_Server, "CCSBot::Upkeep", "\\x55\\x8B\\xEC\\x83\\xEC\\x10\\x53\\x56\\x8B\\xF1\\x8B\\x0D\\x34", 795, 0x90, 5))
-		PrintToServer("Added memory patch %s", "CCSBot::Upkeep");
-		
-	return Plugin_Handled;
-}
-
-public Action Command_Test2(int client, int args)
-{
-	if(g_hPatchGamedata.Length > 0)
-		PrintToServer("CCSBot::Upkeep patched: %s", IsPatchedByLabel("CCSBot::Upkeep") ? "Yes":"No");
-	PrintToServer("CCSBot::Upkeep exists: %s", MemoryPatchExists("CCSBot::Upkeep") ? "Yes":"No");
-}
-#endif
 
 public Action Command_PatchAll(int client, int args)
 {

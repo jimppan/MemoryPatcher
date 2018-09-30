@@ -411,6 +411,16 @@ public SharedPlugin __pl_memorypatcher  =
 #if !defined REQUIRE_PLUGIN
 public __pl_memorypatcher_SetNTVOptional()
 {	
-
+	MarkNativeAsOptional("MP_GetServerOSType");
+	MarkNativeAsOptional("MP_AddMemoryPatch");
+	MarkNativeAsOptional("MP_AddMemoryPatchEx");
+	MarkNativeAsOptional("MP_RemoveMemoryPatch");
+	MarkNativeAsOptional("MP_MemoryPatchExists");
+	MarkNativeAsOptional("MP_IsPatched");
+	MarkNativeAsOptional("MP_PatchAll");
+	MarkNativeAsOptional("MP_Patch");
+	MarkNativeAsOptional("MP_Restore");
+	MarkNativeAsOptional("MP_GetMemoryPatchCount");
+	MarkNativeAsOptional("MP_GetMemoryPatchSigLabel");
 }
 #endif

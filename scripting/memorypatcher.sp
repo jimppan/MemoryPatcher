@@ -4,7 +4,7 @@
 #pragma dynamic 131072
 
 #define PLUGIN_AUTHOR "Rachnus"
-#define PLUGIN_VERSION "1.02"
+#define PLUGIN_VERSION "1.03"
 
 #include <sourcemod>
 #include <sdktools>
@@ -14,7 +14,7 @@
 
 public Plugin myinfo = 
 {
-	name = "Memory Patcher v1.02",
+	name = "Memory Patcher v1.03",
 	author = PLUGIN_AUTHOR,
 	description = "Patch memory and stuff",
 	version = PLUGIN_VERSION,
@@ -789,6 +789,32 @@ public int RestoreMemoryPatchByLabel(const char[] p_sigLabel)
 	return RestoreMemoryPatchByIndex(gamedataIndex);
 }
 
+public void AdjustPatchIndices(int indexRemoved)
+{
+	StringMapSnapshot snapShot = g_hPatchIndices.Snapshot();
+	for (int i = 0; i < snapShot.Length; i++)
+	{
+		char key[MP_PATCH_MAX_NAME_LENGTH];
+		snapShot.GetKey(i, key, sizeof(key));
+		
+		for (int j = 0; j < g_hPatchGamedata.Length; j++)
+		{
+			char sigLabel[MP_PATCH_MAX_NAME_LENGTH];
+			GameConfGetKeyValue(g_hPatchGamedata.Get(j), "siglabel", sigLabel, MP_PATCH_MAX_NAME_LENGTH);
+			
+			if(!StrEqual(key, sigLabel, true))
+			{
+				int restoreIndex = -1;
+				if(g_hPatchIndices.GetValue(sigLabel, restoreIndex))
+				{
+					if(restoreIndex > indexRemoved)
+						g_hPatchIndices.SetValue(sigLabel, restoreIndex - 1);
+				}
+			}
+		}
+	}
+}
+
 public int RestoreMemoryPatchByIndex(int index)
 {
 	if(!IsPatchedByIndex(index))
@@ -815,7 +841,9 @@ public int RestoreMemoryPatchByIndex(int index)
 		for(int j = 0; j < byteCount; j++)
 			StoreToAddress(addr + view_as<Address>(j), opcodes[j], NumberType_Int8);
 	}
-
+	
+	AdjustPatchIndices(restoreIndex);
+	
 	g_hPatchAddress.Erase(restoreIndex);
 	g_hPatchByteCount.Erase(restoreIndex);
 	g_hPatchPreviousOPCodes.Erase(restoreIndex);

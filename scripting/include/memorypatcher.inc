@@ -1,6 +1,7 @@
 #if defined _memorypatcher_included
  #endinput
 #endif
+
 #define _memorypatcher_included
 
 #define MP_PREFIX						" \x09[\x04MemoryPatcher\x09]"

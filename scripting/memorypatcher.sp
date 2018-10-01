@@ -178,10 +178,9 @@ public int Native_RestoreAll(Handle plugin, int numParams)
 
 public int Native_Patch(Handle plugin, int numParams)
 {
-	PrintToServer("wat6");
 	char siglabel[MP_PATCH_MAX_NAME_LENGTH];
 	GetNativeString(1, siglabel, MP_PATCH_MAX_NAME_LENGTH);
-	PrintToServer("wat5");
+
 	return ApplyMemoryPatchByLabel(siglabel);
 }
 
@@ -220,9 +219,9 @@ public Action Command_Patch(int client, int args)
 	
 	char arg[MP_PATCH_MAX_SIG_LENGTH];
 	GetCmdArgString(arg, MP_PATCH_MAX_SIG_LENGTH);
-	PrintToServer("wat1");
+
 	int errorCode = ApplyMemoryPatchByLabel(arg);
-	PrintToServer("wat2");
+
 	char szCode[32];
 	MP_GetApplyErrorCodeString(errorCode, szCode, sizeof(szCode));
 	PrintToChat(client, "%s APPLY PATCH: \x03%s \x09(\x04code: %d\x09) %s", MP_PREFIX, arg, errorCode, szCode);
@@ -663,7 +662,7 @@ public int ApplyMemoryPatchByLabel(const char[] p_sigLabel)
 	
 	if(index == -1)
 		return MP_PATCH_APPLY_ERROR_NOT_FOUND;
-	PrintToServer("wat3");
+
 	return ApplyMemoryPatchByIndex(index);
 }
 

@@ -227,7 +227,10 @@ public KeyValues MP_GenerateGameDataKeyvalues(int ostype, int libtype, const cha
 		Format(szOPcodes[i * 4], opcodecount * 4, "\\x%x", opcodes[i]);
 	szOPcodes[opcodecount * 4] = '\0';
 
-	conf.SetString("opcodes", szOPcodes);
+	char opcodesLabel[32];
+	Format(opcodesLabel, sizeof(opcodesLabel), "opcodes_%s", szOsType);
+
+	conf.SetString(opcodesLabel, szOPcodes);
 	conf.SetString("siglabel", siglabel);
 	conf.Rewind();
 	return conf;

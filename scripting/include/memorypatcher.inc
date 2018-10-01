@@ -6,6 +6,7 @@
 
 #define MP_PREFIX						" \x09[\x04MemoryPatcher\x09]"
 #define MP_GAMEDATA_DIR					"memorypatcher.games"
+#define MP_TEMP_GAMEDATA_DIR			"temp"
 #define MP_DEBUG_PREFIX					"[memorypatcher.smx]"
 #define MP_TEMP_FILE					"temp.memorypatcher.txt"
 #define MP_PATCH_MAX_NAME_LENGTH 		32

@@ -4,7 +4,7 @@
 #pragma dynamic 131072
 
 #define PLUGIN_AUTHOR "Rachnus"
-#define PLUGIN_VERSION "1.01"
+#define PLUGIN_VERSION "1.02"
 
 #include <sourcemod>
 #include <sdktools>
@@ -14,18 +14,18 @@
 
 public Plugin myinfo = 
 {
-	name = "Memory Patcher v1.01",
+	name = "Memory Patcher v1.02",
 	author = PLUGIN_AUTHOR,
 	description = "Patch memory and stuff",
 	version = PLUGIN_VERSION,
 	url = "https://github.com/Rachnus"
 };
 
-
 StringMap g_hPatchIndices = 			null;				// Used to map patchgamedata siglabels with restore arraylists
 bool g_bPatched = 						false;				// Used to check if we've already patched everything on OnMemoryPatcherReady forward
 
 int g_iServerOS = 						OSType_Invalid;		// Servers OS 					(Cached in temp.memorypatcher.txt by default)
+int g_iTempGameDataCounter = 			0;					// Used to store unique temp gamedata files
 
 ArrayList g_hPatchGamedata =   			null;				// Stores all gamedata handles 	(IGameConfig)
 
@@ -50,6 +50,30 @@ public void OnPluginStart()
 	InitPatchLists();
 	
 	g_hPatchIndices = new StringMap();
+	
+	
+	char tempGamedataPath[PLATFORM_MAX_PATH];
+	BuildPath(Path_SM, tempGamedataPath, sizeof(tempGamedataPath), "gamedata/%s/", MP_GAMEDATA_DIR);
+	if(!DirExists(tempGamedataPath, true))
+	{
+		if(CreateDirectory(tempGamedataPath, 777, true))
+		{
+			BuildPath(Path_SM, tempGamedataPath, sizeof(tempGamedataPath), "gamedata/%s/%s/", MP_GAMEDATA_DIR, MP_TEMP_GAMEDATA_DIR);
+			if(!DirExists(tempGamedataPath, true))
+			{
+				if(CreateDirectory(tempGamedataPath, 777, true))
+				{
+#if defined DEBUG
+					MP_Debug("Created temp gamedata directory \"%s\"", tempGamedataPath);
+#endif
+				}
+				else
+					LogError("Could not create gamedata directory \"%s\"", tempGamedataPath);
+			}
+		}
+		else
+			LogError("Could not create gamedata directory \"%s\"", tempGamedataPath);
+	}
 }
 
 public void OnAllPluginsLoaded()
@@ -487,11 +511,15 @@ public int AddMemoryPatch(int ostype, int libtype, const char[] siglabel, char[]
 	// big lol but works
 	KeyValues gamedata = MP_GenerateGameDataKeyvalues(ostype, libtype, siglabel, sig, offset, opcodes, patchbytecount);
 	char path[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, path, sizeof(path), "gamedata/temp.memorypatcher.games.txt");
+	BuildPath(Path_SM, path, sizeof(path), "gamedata/%s/%s/temp.memorypatcher%d.games.txt", MP_GAMEDATA_DIR, MP_TEMP_GAMEDATA_DIR, g_iTempGameDataCounter);
+
+	char uniqueTempGamedata[PLATFORM_MAX_PATH];
+	Format(uniqueTempGamedata, sizeof(uniqueTempGamedata), "%s/%s/temp.memorypatcher%d.games", MP_GAMEDATA_DIR, MP_TEMP_GAMEDATA_DIR, g_iTempGameDataCounter++);
+	
 	gamedata.ExportToFile(path);
 	delete gamedata;
 	
-	Handle gameConfig = LoadGameConfigFile("temp.memorypatcher.games");
+	Handle gameConfig = LoadGameConfigFile(uniqueTempGamedata);
 	if(gameConfig == INVALID_HANDLE)
 	{
 		LogError("Can't find temp.memorypatcher.games.txt gamedata.");
@@ -522,15 +550,20 @@ public int AddMemoryPatchEx(int ostype, int libtype, const char[] siglabel, char
 		
 	// big lol but works
 	KeyValues gamedata = MP_GenerateGameDataKeyvalues(ostype, libtype, siglabel, sig, offset, opcodes, patchbytecount);
+	
 	char path[PLATFORM_MAX_PATH];
-	BuildPath(Path_SM, path, sizeof(path), "gamedata/temp.memorypatcher.games.txt");
+	BuildPath(Path_SM, path, sizeof(path), "gamedata/%s/%s/temp.memorypatcher%d.games.txt", MP_GAMEDATA_DIR, MP_TEMP_GAMEDATA_DIR, g_iTempGameDataCounter);
+
+	char uniqueTempGamedata[PLATFORM_MAX_PATH];
+	Format(uniqueTempGamedata, sizeof(uniqueTempGamedata), "%s/%s/temp.memorypatcher%d.games", MP_GAMEDATA_DIR, MP_TEMP_GAMEDATA_DIR, g_iTempGameDataCounter++);
+	
 	gamedata.ExportToFile(path);
 	delete gamedata;
 	
-	Handle gameConfig = LoadGameConfigFile("temp.memorypatcher.games");
+	Handle gameConfig = LoadGameConfigFile(uniqueTempGamedata);
 	if(gameConfig == INVALID_HANDLE)
 	{
-		LogError("Can't find temp.memorypatcher.games.txt gamedata.");
+		LogError("Can't find %s.txt gamedata.", uniqueTempGamedata);
 		return MP_PATCH_ADD_ERROR_INVALID_TEMP_FILE;
 	}
 
